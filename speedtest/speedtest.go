@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -17,6 +18,17 @@ type Stats struct {
 	Repeats int64
 	// data sink couldn't receive read data, block dropped
 	Dropped int64
+}
+
+func (s Stats) Since(s2 Stats) Stats {
+	return Stats{
+		Bytes:    s.Bytes - s2.Bytes,
+		Blocks:   s.Blocks - s2.Blocks,
+		Elapsed:  s.Elapsed - s2.Elapsed,
+		Overhead: s.Overhead - s2.Overhead,
+		Repeats:  s.Repeats - s2.Repeats,
+		Dropped:  s.Dropped - s2.Dropped,
+	}
 }
 
 func Provide(c net.Conn, dataSource <-chan []byte, doneChunks chan<- []byte, stats chan<- Stats) error {
@@ -102,6 +114,7 @@ func Consume(c net.Conn, blockSource <-chan []byte, blockSink chan<- []byte, sta
 }
 
 func Report(prefix string, rate time.Duration, stats <-chan Stats) {
+	var last Stats
 	for _ = range time.NewTicker(rate).C {
 		s, open := <-stats
 		if !open {
@@ -110,10 +123,13 @@ func Report(prefix string, rate time.Duration, stats <-chan Stats) {
 		if s.Elapsed == 0 {
 			continue
 		}
+		last, s = s, s.Since(last)
 		Bps := uint64(float64(s.Bytes) / (s.Elapsed.Seconds()))
-		fmt.Printf("%s: %s in %s: %sps  [%s, %d repeats, %d drops, %v overhead]\n",
+		fmt.Printf("%s: %s in %s: %sbps  [%s, %d repeats, %d drops, %v overhead]\n",
 			prefix,
-			humanize.Bytes(uint64(s.Bytes)), s.Elapsed, humanize.Bytes(Bps),
+			humanize.Bytes(uint64(s.Bytes)),
+			s.Elapsed,
+			strings.TrimSuffix(humanize.Bytes(8*Bps), "B"),
 			humanize.SI(float64(s.Blocks), " blocks"),
 			s.Repeats, s.Dropped, s.Overhead)
 	}
